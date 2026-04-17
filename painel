@@ -1,0 +1,325 @@
+"""
+Dashboard de Triagem - Controle Logístico Claro
+Execute: pip install pandas plotly dash openpyxl
+python dashboard_claro.py
+Acesse: http://localhost:8050
+"""
+import pandas as pd
+import plotly.graph_objects as go
+import plotly.express as px
+from dash import Dash, dcc, html, Input, Output, callback
+import sys
+import os
+# ──────────────────────────────────────────────
+# 1. CARREGAMENTO DOS DADOS
+# ──────────────────────────────────────────────
+def load_data(filepath: str) -> pd.DataFrame:
+df = pd.read_excel(filepath)
+# Normaliza nomes de colunas
+df.columns = df.columns.str.strip()
+# Converte data numérica Excel → datetime
+if df["Data"].dtype in ["int64", "float64"]:
+df["Data"] = pd.to_datetime(df["Data"], origin="1899-12-30", unit="D")
+else:
+df["Data"] = pd.to_datetime(df["Data"], errors="coerce")
+return df
+# Tenta carregar o arquivo passado como argumento ou usa o padrão
+DEFAULT_FILE = "Triagem_Março.xlsx"
+filepath = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_FILE
+try:
+df = load_data(filepath)
+except FileNotFoundError:
+print(f" Arquivo '{filepath}' não encontrado.")
+print(" Informe o caminho: python dashboard_claro.py <arquivo.xlsx>")
+sys.exit(1)
+# ──────────────────────────────────────────────
+# 2. PALETA E ESTILO CLARO
+# ──────────────────────────────────────────────
+CLARO_RED = "#E3000B"
+DARK_BG = "#0D1117"
+CARD_BG = "#161B22"
+CARD_BORDER = "#30363D"
+TEXT_WHITE = "#F0F6FC"
+TEXT_GRAY = "#8B949E"
+ACCENT_BLUE = "#58A6FF"
+ACCENT_GRN = "#3FB950"
+ACCENT_ORG = "#F78166"
+ACCENT_YLW = "#E3B341"
+SEMANA_ORDER = ["Semana 01", "Semana 02", "Semana 03", "Semana 04", "Semana 05"]
+SEMANA_COLORS = [ACCENT_BLUE, ACCENT_GRN, ACCENT_YLW, ACCENT_ORG, CLARO_RED]
+LOCAIS_COLORS = {
+"Lab. Campinas - HFC": ACCENT_BLUE,
+"Lab. Rio de Janeiro - HFC": ACCENT_GRN,
+"Lab. Brasília - HFC": ACCENT_YLW,
+"Lab. Manaus - HFC": ACCENT_ORG,
+"Lab. Rio de Janeiro - DTH": CLARO_RED,
+}
+CHART_LAYOUT = dict(
+paper_bgcolor=CARD_BG,
+plot_bgcolor=CARD_BG,
+font=dict(family="'Courier New', monospace", color=TEXT_WHITE, size=11),
+margin=dict(t=36, b=36, l=40, r=16),
+legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(size=10)),
+)
+# ──────────────────────────────────────────────
+# 3. FUNÇÕES AUXILIARES
+# ──────────────────────────────────────────────
+def fmt_num(n: float) -> str:
+if n >= 1_000_000:
+return f"{n/1_000_000:.2f}M"
+if n >= 1_000:
+return f"{n/1_000:.1f}K"
+return str(int(n))
+def filter_df(df, semanas=None, locais=None, triagens=None, terminais=None):
+mask = pd.Series(True, index=df.index)
+if semanas:
+mask &= df["semana"].isin(semanas)
+if locais:
+mask &= df["Local"].isin(locais)
+if triagens:
+mask &= df["Triagem"].isin(triagens)
+if terminais:
+t_filter = df["Terminais"].isin(terminais)
+mask &= t_filter
+return df[mask]
+# ──────────────────────────────────────────────
+# 4. LAYOUT
+# ──────────────────────────────────────────────
+# Normaliza coluna de semana
+df["semana"] = df["semana "] if "semana " in df.columns else df["semana"]
+all_semanas = sorted(df["semana"].dropna().unique(), key=lambda x: SEMANA_ORDER.index(x) if all_locais = sorted(df["Local"].dropna().unique())
+all_triagens = sorted(df["Triagem"].dropna().unique())
+all_terminais_raw = sorted(df["Terminais"].dropna().unique())
+all_terminais = [t for t in all_terminais_raw if t != "Acessórios"]
+def card(title, value_id, icon=" ", color=ACCENT_BLUE):
+return html.Div([
+html.Div(icon, style={"fontSize": "22px", "marginBottom": "4px"}),
+html.Div(title, style={"fontSize": "10px", "color": TEXT_GRAY, "textTransform": "uppercase", html.Div(id=value_id, style={"fontSize": "26px", "fontWeight": "700", "color": color, ], style={
+"background": CARD_BG,
+"border": f"1px solid {CARD_BORDER}",
+"borderTop": f"3px solid {color}",
+"borderRadius": "8px",
+"padding": "16px 20px",
+"flex": "1",
+"minWidth": "140px",
+"textAlign": "center",
+})
+def filter_dropdown(label, fid, options, multi=True, value=None):
+return html.Div([
+html.Label(label, style={"color": TEXT_GRAY, "fontSize": "10px", "textTransform": "uppercase", dcc.Dropdown(
+id=fid,
+options=[{"label": o, "value": o} for o in options],
+value=value,
+multi=multi,
+placeholder=f"Todos...",
+style={"fontSize": "12px", "backgroundColor": DARK_BG, "color": TEXT_WHITE, "border": className="dark-dropdown",
+)
+], style={"flex": "1", "minWidth": "160px"})
+app = Dash(__name__, suppress_callback_exceptions=True)
+app.title = "Controle Logístico Claro · Março 2026"
+app.layout = html.Div([
+# ── HEADER ──────────────────────────────────
+html.Div([
+html.Div([
+html.Span("Clar", style={"color": TEXT_WHITE}),
+html.Span("o", style={"color": CLARO_RED}),
+html.Span("·", style={"color": CARD_BORDER, "margin": "0 8px"}),
+html.Span("Controle Logístico", style={"color": TEXT_GRAY, "fontWeight": "400", "], style={"fontSize": "24px", "fontWeight": "700", "fontFamily": "'Courier New', monospace"}),
+html.Div("Triagem · Março 2026", style={"color": TEXT_GRAY, "fontSize": "12px", "marginTop": ], style={"background": CARD_BG, "borderBottom": f"1px solid {CARD_BORDER}", "padding": "# ── FILTROS ──────────────────────────────────
+html.Div([
+filter_dropdown("Semana", "f-semana", all_semanas),
+filter_dropdown("Local / Lab", "f-local", all_locais),
+filter_dropdown("Triagem", "f-triagem", all_triagens),
+filter_dropdown("Terminal", "f-terminal", all_terminais),
+], style={"display": "flex", "gap": "12px", "flexWrap": "wrap", "padding": "16px 32px", "# ── KPI CARDS ────────────────────────────────
+html.Div([
+card("Total Registros", "kpi-registros", " ", ACCENT_BLUE),
+card("Qtd. Total", "kpi-qtd", " ", ACCENT_GRN),
+card("Terminais", "kpi-terminais", " ", ACCENT_YLW),
+card("Acessórios", "kpi-acessorios", " ", ACCENT_ORG),
+card("Laboratórios", "kpi-labs", " ", CLARO_RED),
+], style={"display": "flex", "gap": "12px", "flexWrap": "wrap", "padding": "20px 32px"}),
+# ── LINHA 1: Barras semana + Pizza local ────
+html.Div([
+html.Div([dcc.Graph(id="g-semana", config={"displayModeBar": False})],
+style={"flex": "2", "background": CARD_BG, "border": f"1px solid {CARD_BORDER}", html.Div([dcc.Graph(id="g-local", config={"displayModeBar": False})],
+style={"flex": "1", "background": CARD_BG, "border": f"1px solid {CARD_BORDER}", ], style={"display": "flex", "gap": "12px", "padding": "0 32px 16px"}),
+# ── LINHA 2: Terminal stacked + Giro ─────────
+html.Div([
+html.Div([dcc.Graph(id="g-terminal", config={"displayModeBar": False})],
+style={"flex": "2", "background": CARD_BG, "border": f"1px solid {CARD_BORDER}", html.Div([dcc.Graph(id="g-giro", config={"displayModeBar": False})],
+style={"flex": "1", "background": CARD_BG, "border": f"1px solid {CARD_BORDER}", ], style={"display": "flex", "gap": "12px", "padding": "0 32px 16px"}),
+# ── LINHA 3: Evolução diária ─────────────────
+html.Div([
+html.Div([dcc.Graph(id="g-diario", config={"displayModeBar": False})],
+style={"flex": "1", "background": CARD_BG, "border": f"1px solid {CARD_BORDER}", ], style={"display": "flex", "gap": "12px", "padding": "0 32px 24px"}),
+# ── FOOTER ───────────────────────────────────
+html.Div("Dashboard gerado automaticamente · dados: Triagem_Março.xlsx",
+style={"color": CARD_BORDER, "fontSize": "10px", "textAlign": "center", "padding": ], style={"background": DARK_BG, "minHeight": "100vh", "fontFamily": "'Segoe UI', sans-serif", # ── CSS global ──────────────────────────────────
+app.index_string = """
+<!DOCTYPE html>
+<html>
+<head>{%metas%}<title>{%title%}</title>{%favicon%}{%css%}
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: """ + DARK_BG + """; color: """ + TEXT_WHITE + """; }
+.dark-dropdown .Select-control { background: """ + DARK_BG + """ !important; border-color: .dark-dropdown .Select-menu-outer { background: """ + CARD_BG + """ !important; border-color: .dark-dropdown .Select-option { background: """ + CARD_BG + """ !important; color: """ + TEXT_.dark-dropdown .Select-option:hover { background: """ + DARK_BG + """ !important; }
+.dark-dropdown .Select-value-label { color: """ + TEXT_WHITE + """ !important; }
+.dark-dropdown .Select-placeholder { color: """ + TEXT_GRAY + """ !important; }
+scrollbar-width: thin; scrollbar-color: """ + CARD_BORDER + " " + DARK_BG + """;
+</style>
+</head>
+<body>{%app_entry%}<footer>{%config%}{%scripts%}{%renderer%}</footer></body>
+</html>
+"""
+# ──────────────────────────────────────────────
+# 5. CALLBACKS
+# ──────────────────────────────────────────────
+@callback(
+Output("kpi-registros", "children"),
+Output("kpi-qtd", "children"),
+Output("kpi-terminais", "children"),
+Output("kpi-acessorios", "children"),
+Output("kpi-labs", "children"),
+Output("g-semana", "figure"),
+Output("g-local", "figure"),
+Output("g-terminal", "figure"),
+Output("g-giro", "figure"),
+Output("g-diario", "figure"),
+Input("f-semana", "value"),
+Input("f-local", "value"),
+Input("f-triagem", "value"),
+Input("f-terminal", "value"),
+)
+def update_all(semanas, locais, triagens, terminais):
+dff = filter_df(df, semanas, locais, triagens, terminais)
+# ── KPIs ──────────────────────────────────
+qtd_total = dff["Quantidade"].sum()
+qtd_term = dff[dff["Terminais"] != "Acessórios"]["Quantidade"].sum()
+qtd_acess = dff[dff["Terminais"] == "Acessórios"]["Quantidade"].sum()
+n_labs = dff["Local"].nunique()
+# ── G-SEMANA: barras agrupadas por semana ──
+sem_df = (dff.groupby("semana")["Quantidade"].sum()
+.reindex(SEMANA_ORDER).dropna().reset_index())
+fig_sem = go.Figure(go.Bar(
+x=sem_df["semana"],
+y=sem_df["Quantidade"],
+marker=dict(color=SEMANA_COLORS[:len(sem_df)], line=dict(width=0)),
+text=[fmt_num(v) for v in sem_df["Quantidade"]],
+textposition="outside",
+textfont=dict(color=TEXT_WHITE, size=11),
+))
+fig_sem.update_layout(
+**CHART_LAYOUT,
+title=dict(text="Volume por Semana", font=dict(color=TEXT_WHITE, size=13)),
+xaxis=dict(gridcolor=CARD_BORDER, color=TEXT_GRAY),
+yaxis=dict(gridcolor=CARD_BORDER, color=TEXT_GRAY, showgrid=True),
+)
+# ── G-LOCAL: donut ─────────────────────────
+loc_df = dff.groupby("Local")["Quantidade"].sum().reset_index()
+fig_loc = go.Figure(go.Pie(
+labels=loc_df["Local"],
+values=loc_df["Quantidade"],
+hole=0.55,
+marker=dict(colors=[LOCAIS_COLORS.get(l, ACCENT_BLUE) for l in loc_df["Local"]],
+line=dict(color=DARK_BG, width=2)),
+textinfo="percent",
+textfont=dict(color=TEXT_WHITE, size=10),
+))
+fig_loc.update_layout(
+**CHART_LAYOUT,
+title=dict(text="Volume por Local", font=dict(color=TEXT_WHITE, size=13)),
+legend=dict(font=dict(size=9), orientation="v"),
+)
+# ── G-TERMINAL: horizontal stacked por semana ─
+term_df = (dff[dff["Terminais"] != "Acessórios"]
+.groupby(["semana", "Terminais"])["Quantidade"].sum()
+.reset_index())
+top_terms = (term_df.groupby("Terminais")["Quantidade"].sum()
+.nlargest(8).index.tolist())
+term_df2 = term_df[term_df["Terminais"].isin(top_terms)]
+pal = px.colors.qualitative.Bold
+fig_term = go.Figure()
+for i, t in enumerate(top_terms):
+sub = term_df2[term_df2["Terminais"] == t]
+fig_term.add_trace(go.Bar(
+name=t,
+x=[sub[sub["semana"] == s]["Quantidade"].sum() for s in SEMANA_ORDER],
+y=SEMANA_ORDER,
+orientation="h",
+marker=dict(color=pal[i % len(pal)]),
+text=[fmt_num(sub[sub["semana"] == s]["Quantidade"].sum()) if sub[sub["semana"] == textposition="inside",
+textfont=dict(size=9),
+))
+fig_term.update_layout(
+**CHART_LAYOUT,
+barmode="stack",
+title=dict(text="Terminais por Semana (Top 8)", font=dict(color=TEXT_WHITE, size=13)),
+xaxis=dict(gridcolor=CARD_BORDER, color=TEXT_GRAY),
+yaxis=dict(gridcolor=CARD_BORDER, color=TEXT_GRAY, categoryorder="array", categoryarray=legend=dict(font=dict(size=9), orientation="h", y=-0.2),
+)
+# ── G-GIRO: rosca ─────────────────────────
+if "Giro" in dff.columns:
+giro_df = dff.groupby("Giro")["Quantidade"].sum().reset_index()
+else:
+giro_df = pd.DataFrame({"Giro": ["Sem dado"], "Quantidade": [1]})
+fig_giro = go.Figure(go.Pie(
+labels=giro_df["Giro"],
+values=giro_df["Quantidade"],
+hole=0.6,
+marker=dict(colors=[ACCENT_GRN, ACCENT_YLW, CLARO_RED, ACCENT_BLUE],
+line=dict(color=DARK_BG, width=2)),
+textinfo="percent+label",
+textfont=dict(color=TEXT_WHITE, size=10),
+))
+fig_giro.update_layout(
+**CHART_LAYOUT,
+title=dict(text="Distribuição de Giro", font=dict(color=TEXT_WHITE, size=13)),
+showlegend=False,
+)
+# ── G-DIARIO: linha evolução diária ────────
+day_df = dff.groupby(dff["Data"].dt.date)["Quantidade"].sum().reset_index()
+day_df.columns = ["Data", "Quantidade"]
+day_df = day_df.sort_values("Data")
+fig_dia = go.Figure()
+fig_dia.add_trace(go.Scatter(
+x=day_df["Data"], y=day_df["Quantidade"],
+mode="lines+markers",
+line=dict(color=ACCENT_BLUE, width=2),
+marker=dict(color=CLARO_RED, size=6),
+fill="tozeroy",
+fillcolor=f"rgba(88,166,255,0.10)",
+name="Qtd. Diária",
+))
+# Média móvel 3 dias
+day_df["MA3"] = day_df["Quantidade"].rolling(3, min_periods=1).mean()
+fig_dia.add_trace(go.Scatter(
+x=day_df["Data"], y=day_df["MA3"],
+mode="lines",
+line=dict(color=ACCENT_YLW, width=1.5, dash="dot"),
+name="Méd. 3d",
+))
+fig_dia.update_layout(
+**CHART_LAYOUT,
+title=dict(text="Evolução Diária da Produção", font=dict(color=TEXT_WHITE, size=13)),
+xaxis=dict(gridcolor=CARD_BORDER, color=TEXT_GRAY),
+yaxis=dict(gridcolor=CARD_BORDER, color=TEXT_GRAY, showgrid=True),
+legend=dict(orientation="h", y=1.08),
+)
+return (
+fmt_num(len(dff)),
+fmt_num(qtd_total),
+fmt_num(qtd_term),
+fmt_num(qtd_acess),
+str(n_labs),
+fig_sem, fig_loc, fig_term, fig_giro, fig_dia,
+)
+# ──────────────────────────────────────────────
+# 6. MAIN
+# ──────────────────────────────────────────────
+if __name__ == "__main__":
+print("=" * 50)
+print(" Dashboard Claro – Controle Logístico")
+print(" Acesse → http://localhost:8050")
+print("=" * 50)
+app.run(debug=False, host="0.0.0.0", port=8050)
